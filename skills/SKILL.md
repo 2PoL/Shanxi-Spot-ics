@@ -1,11 +1,15 @@
-| name | shanxi-trade-ics-monthly |
-| --- | --- |
-| description | 从“交易公告”Markdown表同步到年度 ICS（VEVENT），包含月度/上中下旬分时段、结果发布、滚动撮合与发电侧合同转让；保持与历史格式一致，便于订阅与复核。 |
-| version | 1.0.0 |
+---
+name: shanxi-trade-ics-monthly
+description: 从“交易公告”Markdown 表同步山西电力交易事件到固定订阅文件 trade.ics；用于月度更新、结果发布、滚动撮合及发电侧合同转让日程维护。
+metadata:
+  version: 1.1.0
+---
 
 ## Shanxi Monthly Trade ICS Sync
 
-将每月的“交易公告”表格转为 iCalendar 事件块（VEVENT），按时间顺序追加到年度 `YYYYtrade.ics` 文件中。
+将每月的“交易公告”表格转为 iCalendar 事件块（VEVENT），按时间顺序写入固定订阅文件 `trade.ics`。
+
+`trade.ics` 是唯一的持续更新输出，文件名不随年份变化。`2025trade.ics` 等带年份文件仅作为历史归档，不在月度同步时修改，也不要新建 `YYYYtrade.ics`。
 
 核心原则：严格按公告内容建事件，不擅自添加或改写；字段格式、命名与历史保持一致（含时区、DTSTAMP、UID 规则）。
 
@@ -83,7 +87,7 @@ EXTEND.md 支持（示例）：
 
 ### Step 3: 确定插入点与 UID 规则
 
-- 在 `YYYYtrade.ics` 的末尾（上月最后一个 `END:VEVENT` 之后）按时间顺序追加。
+- 在 `trade.ics` 的末尾（上月最后一个 `END:VEVENT` 之后）按时间顺序追加。
 - UID 采用：`YYYYMMDDThhmm-序号@{uid_prefix}`；序号延续历史最大值递增。
 - `DTSTAMP` 使用统一 `base_dtstamp`（年度内一致）。
 
@@ -106,11 +110,11 @@ END:VEVENT
 
 ### Step 5: 保存并备份
 
-保存 `YYYYtrade.ics`。如需备份，可将上一次版本另存为 `YYYYtrade.backup-YYYYMMDD-HHMM.ics`。
+保存 `trade.ics`。如需备份，可将上一次版本另存为 `trade.backup-YYYYMMDD-HHMM.ics`。
 
 ### Step 6: 校验
 
-- 快速检查：`rg 'YYYYMM' YYYYtrade.ics` 是否覆盖公告全部场次。
+- 快速检查：`rg 'YYYYMM' trade.ics` 是否覆盖公告全部场次，其中 `YYYYMM` 替换为目标年月。
 - 结构检查：BEGIN/END 成对、字段齐全、时间递增、UID 无重复。
 - 历史一致性：时区使用 `Asia/Shanghai`；`DESCRIPTION` 换行使用 `\n`；关键命名与已存在月份一致。
 
@@ -123,7 +127,7 @@ END:VEVENT
 
 **Month:** 2026-05
 **Files:**
-- Updated: 2026trade.ics
+- Updated: trade.ics
 
 **Events Added:**
 - 月度分时段：X（集中竞价/结果发布/滚动撮合）
@@ -140,6 +144,7 @@ END:VEVENT
 ## Notes
 
 - 不修改既有月份与历史事件的内容或顺序。
+- 月度同步只更新 `trade.ics`；不要生成或更新 `YYYYtrade.ics`。
 - `Asia/Shanghai` 为唯一时区；所有 `DTSTART/DTEND` 使用该时区形式。
 - 集中竞价 `DESCRIPTION` 使用三行并以 `\n` 分隔：
   - `06:30-09:15 预申报`
@@ -150,4 +155,3 @@ END:VEVENT
 ## Extension Support
 
 通过 EXTEND.md 可配置模板、时区、UID 规则与纳入范围（如多月连续交易）。建议项目级配置优先，以确保团队成员一致行为。
-

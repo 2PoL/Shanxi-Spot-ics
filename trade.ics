@@ -5,7 +5,7 @@ CALSCALE:GREGORIAN
 BEGIN:VTIMEZONE
 TZID:Asia/Shanghai
 TZURL:http://tzurl.org/zoneinfo-fallback/Asia/Shanghai
-X-WR-CALNAME:2026年交易日历
+X-WR-CALNAME:山西电力市场交易日历
 X-LIC-LOCATION:Asia/Shanghai
 X-WR-CALDESC:2026年山西电力市场交易安排(基底日历，可按月扩展)；更新时间：2025-12-29T12:58:02+08:00
 BEGIN:STANDARD
