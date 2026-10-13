@@ -1,157 +1,81 @@
 ---
 name: shanxi-trade-ics-monthly
-description: 从“交易公告”Markdown 表同步山西电力交易事件到固定订阅文件 trade.ics；用于月度更新、结果发布、滚动撮合及发电侧合同转让日程维护。
+description: 从“交易公告”Markdown 表同步山西电力交易事件到固定订阅文件 trade.ics；用于每月新公告发布后的日历更新。
 metadata:
-  version: 1.1.0
+  version: 2.0.0
 ---
 
 ## Shanxi Monthly Trade ICS Sync
 
-将每月的“交易公告”表格转为 iCalendar 事件块（VEVENT），按时间顺序写入固定订阅文件 `trade.ics`。
+把 `交易公告/YYYY-MM.md` 的表 1 转为 VEVENT，追加到订阅文件 `trade.ics`，再用 `scripts/check.py` 校验。
 
-`trade.ics` 是唯一的持续更新输出，文件名不随年份变化。`2025trade.ics` 等带年份文件仅作为历史归档，不在月度同步时修改，也不要新建 `YYYYtrade.ics`。
-
-核心原则：严格按公告内容建事件，不擅自添加或改写；字段格式、命名与历史保持一致（含时区、DTSTAMP、UID 规则）。
-
-## Script Directory
-
-当前技能以人工/半自动方式执行，无强制脚本依赖。可选地在 `scripts/` 目录加入自定义工具：
-
-| Script | Purpose |
-| --- | --- |
-| `scripts/check-uids.ts` | 扫描 ICS，校验 UID 连续性与唯一性 |
-| `scripts/validate-ics.ts` | 事件块基本结构校验（BEGIN/END 成对、字段完整） |
-
-## Preferences (EXTEND.md)
-
-支持在以下路径读取扩展配置（从高到低优先级）：
-
-```
-# macOS, Linux, WSL, Git Bash
-test -f .baoyu-skills/shanxi-trade-ics-monthly/EXTEND.md && echo "project"
-test -f "${XDG_CONFIG_HOME:-$HOME/.config}/baoyu-skills/shanxi-trade-ics-monthly/EXTEND.md" && echo "xdg"
-test -f "$HOME/.baoyu-skills/shanxi-trade-ics-monthly/EXTEND.md" && echo "user"
-```
-
-```
-# PowerShell (Windows)
-if (Test-Path .baoyu-skills/shanxi-trade-ics-monthly/EXTEND.md) { "project" }
-$xdg = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { "$HOME/.config" }
-if (Test-Path "$xdg/baoyu-skills/shanxi-trade-ics-monthly/EXTEND.md") { "xdg" }
-if (Test-Path "$HOME/.baoyu-skills/shanxi-trade-ics-monthly/EXTEND.md") { "user" }
-```
-
-EXTEND.md 支持（示例）：
-
-| Setting | Values | Default | Description |
-| --- | --- | --- | --- |
-| `timezone` | IANA TZ | `Asia/Shanghai` | ICS 时区（与历史一致） |
-| `base_dtstamp` | UTC `YYYYMMDDThhmmssZ` | `20251229T000000Z` | 统一 DTSTAMP（随年度维护） |
-| `uid_prefix` | string | `shanxi` | UID 末尾域标识，如 `@shanxi` |
-| `uid_start_seq` | integer | auto | 本批插入起始序号（接续历史最大值） |
-| `templates.concentrated_bidding` | multi-line | 三段式默认 | 集中竞价 DESCRIPTION 模板（含 `\n` 换行） |
-| `templates.rolling` | string | `交易方式: 滚动撮合` | 滚动撮合 DESCRIPTION 模板 |
-| `templates.bilateral` | string | `交易方式: 双边协商` | 双边协商 DESCRIPTION 模板 |
-| `templates.listing` | string | `交易方式: 挂牌` | 挂牌 DESCRIPTION 模板 |
-| `include_multi_month_sessions` | true/false | false | 是否写入“多月连续交易”类场次（默认不写入，保持与历史一致） |
-
-## Usage
-
-流程分两阶段：先“解析公告”，再“写入 ICS 并校验”。
+- `trade.ics` 是唯一持续更新的输出；`2025trade.ics` 为归档，不再改动，也不要新建 `YYYYtrade.ics`。
+- 严格按公告建事件，不增删、不改写标题；格式与已有事件保持一致。
 
 ## Workflow
 
-### Step 1: 读取公告并识别内容
+### 1. 准备公告
 
-读取目标月份 `交易公告/YYYY-MM.md` 表格，识别字段：
+公告保存为 `交易公告/YYYY-MM.md`，表 1 为 HTML 表格，列为：日期 / 时间 / 交易方式(环节) / 交易组织安排。
 
-| 列名 | 说明 |
+PDF 转换常在跨页处把一行拆成两行（标题被截断、日期单元格为空、`rowspan` 错位）。遇到这种行，以 PDF 原文为准生成事件，不必修改 md。
+
+### 2. 生成事件
+
+| 规则 | 说明 |
 | --- | --- |
-| 日期 | 单日或日期范围（例如 `2026年5月6日` / `2026年5月6-15日`） |
-| 时间 | 起止时段（如 `09:00-12:00`） |
-| 交易方式/环节 | 集中竞价/滚动撮合/挂牌/双边协商/结果发布/预申报/申报/出清等 |
-| 交易组织安排 | 用于 ICS `SUMMARY` 的完整事件标题 |
+| 跳过 | 表 2 日滚动交易；标题含“多月连续交易”的场次 |
+| 合并 | 同一标题的 `预申报`/`申报`/`出清` 合并为一个事件：开始取首段、结束取末段 |
+| 拆分 | 结果发布、滚动撮合上午/下午、合同转让双边/挂牌，各为独立事件 |
+| 日期范围 | `2025年12月18日09:00-12月19日12:00` 这类跨日写法，生成一个跨日事件 |
+| SUMMARY | 取“交易组织安排”原文，去掉多余空格（如 `发电侧 2026年` → `发电侧2026年`） |
 
-注：当检测到“多月连续交易”类行，是否写入由 `include_multi_month_sessions` 决定（默认跳过）。
+DESCRIPTION 按交易方式选择：
 
-### Step 2: 解析并结构化事件
+| 交易方式/环节 | DESCRIPTION |
+| --- | --- |
+| 预申报+申报+出清 | `06:30-09:15 预申报\n09:15-09:25 申报\n09:25-09:30 出清`（按公告实际时段） |
+| 滚动撮合 / 双边协商 / 挂牌 / 集中竞价 | `交易方式: {方式}` |
+| `/` | `交易方式/环节: /` |
+| 结果发布 | 不写 DESCRIPTION |
 
-为每一行生成结构化事件：
+### 3. 写入 trade.ics
 
-- 解析日期与时间，形成本地时区 `DTSTART`/`DTEND`（`YYYYMMDDThhmmss`，无秒则用 `00`）。
-- `SUMMARY` 取“交易组织安排”。
-- `DESCRIPTION`：
-  - 集中竞价：使用三段式模板（预申报/申报/出清，使用 `\n` 分隔）。
-  - 滚动撮合/挂牌/双边协商：按模板填充“交易方式: …”。
-- 不在公告内的补充信息不新增。
-
-### Step 3: 确定插入点与 UID 规则
-
-- 在 `trade.ics` 的末尾（上月最后一个 `END:VEVENT` 之后）按时间顺序追加。
-- UID 采用：`YYYYMMDDThhmm-序号@{uid_prefix}`；序号延续历史最大值递增。
-- `DTSTAMP` 使用统一 `base_dtstamp`（年度内一致）。
-
-### Step 4: 写入 VEVENT 块
-
-每条事件写入：
+在 `END:VCALENDAR` 之前按 DTSTART 顺序追加，已有事件不改动、不重排。
 
 ```
 BEGIN:VEVENT
-DTSTAMP:{base_dtstamp}
-UID:{YYYYMMDDThhmm}-{seq}@{uid_prefix}
-DTSTART;TZID={timezone}:{YYYYMMDDThhmm}
-DTEND;TZID={timezone}:{YYYYMMDDThhmm}
+DTSTAMP:20251229T000000Z
+UID:{DTSTART}-{seq}@shanxi
+DTSTART;TZID=Asia/Shanghai:{YYYYMMDDThhmmss}
+DTEND;TZID=Asia/Shanghai:{YYYYMMDDThhmmss}
 SUMMARY:{标题}
-DESCRIPTION:{可选}
+DESCRIPTION:{见上表}
 END:VEVENT
 ```
 
-集中竞价结果发布、滚动撮合（上午/下午）、合同转让（双边/挂牌）需分别建独立事件。
+- `seq` 接续文件中现有的最大序号递增：`grep -o -- '-[0-9]*@shanxi' trade.ics | tr -dc '0-9\n' | sort -n | tail -1`。
+- `DTSTAMP` 固定为 `20251229T000000Z`。
+- 时区一律 `Asia/Shanghai`，换行符为 LF，文件以换行结尾。
 
-### Step 5: 保存并备份
+### 4. 校验
 
-保存 `trade.ics`。如需备份，可将上一次版本另存为 `trade.backup-YYYYMMDD-HHMM.ics`。
-
-### Step 6: 校验
-
-- 快速检查：`rg 'YYYYMM' trade.ics` 是否覆盖公告全部场次，其中 `YYYYMM` 替换为目标年月。
-- 结构检查：BEGIN/END 成对、字段齐全、时间递增、UID 无重复。
-- 历史一致性：时区使用 `Asia/Shanghai`；`DESCRIPTION` 换行使用 `\n`；关键命名与已存在月份一致。
-
-### Step 7: 完成报告
-
-输出本次同步结果（示例模板）：
-
-```
-**Sync Complete**
-
-**Month:** 2026-05
-**Files:**
-- Updated: trade.ics
-
-**Events Added:**
-- 月度分时段：X（集中竞价/结果发布/滚动撮合）
-- 上旬分时段：X（集中竞价/结果发布/滚动撮合）
-- 中旬分时段：X（集中竞价/结果发布/滚动撮合）
-- 下旬分时段：X（集中竞价/结果发布/滚动撮合）
-- 合同转让（双边/挂牌）：X
-- 代理购电/绿色电力：X
-
-**Duplicates Skipped:** 0
-**UID Range:** N → M
+```bash
+python3 scripts/check.py YYYY-MM
 ```
 
-## Notes
+检查内容包括：文件结构（BEGIN/END 是否配对、必填字段是否齐全、UID 是否唯一且与 DTSTART 一致、结束时间是否晚于开始时间、有没有误写入日滚动或多月连续交易），以及该月 md 中的每个场次是否都已写入。
 
-- 不修改既有月份与历史事件的内容或顺序。
-- 月度同步只更新 `trade.ics`；不要生成或更新 `YYYYtrade.ics`。
-- `Asia/Shanghai` 为唯一时区；所有 `DTSTART/DTEND` 使用该时区形式。
-- 集中竞价 `DESCRIPTION` 使用三行并以 `\n` 分隔：
-  - `06:30-09:15 预申报`
-  - `09:15-09:25 申报`
-  - `09:25-09:30 出清`
-- 若公告存在“多月连续交易”，默认不写入（与历史一致）；如需开启请在 EXTEND.md 指定。
+- 结构错误必须修复。
+- 报告“缺失”时：若对应行有 `!` 警告（PDF 转换断行），对照 PDF 确认日历已正确写入即可；否则补写事件。
 
-## Extension Support
+推送到 `main` 后 Cloudflare Pages 自动部署到 `https://shanxi-spot-ics.pages.dev/trade.ics`，构建命令 `python3 scripts/check.py --ics-only` 只校验结构。
 
-通过 EXTEND.md 可配置模板、时区、UID 规则与纳入范围（如多月连续交易）。建议项目级配置优先，以确保团队成员一致行为。
+### 5. 报告
+
+```
+**Month:** YYYY-MM
+**Events Added:** N（UID 序号 A → B）
+**Skipped:** 日滚动 / 多月连续交易 X 条
+**Check:** 通过
+```
